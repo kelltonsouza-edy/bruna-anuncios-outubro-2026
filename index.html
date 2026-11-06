@@ -76,6 +76,21 @@ select.sel{max-width:min(340px,100%)}
 .eq .v{text-align:right;font-variant-numeric:tabular-nums}
 .eq .sum{border-top:1px solid var(--axis);padding-top:6px;font-weight:700}
 .note{font-size:13px;color:var(--muted)}
+.funis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}
+@media (max-width:1100px){.funis{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:700px){.funis{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:460px){.funis{grid-template-columns:1fr}}
+.funil.card{padding:16px}
+.funil{text-align:left;font:inherit;color:inherit;cursor:pointer;display:flex;flex-direction:column;gap:2px}
+.funil:hover{background:var(--surface-2)}
+.funil[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;background:var(--accent-wash)}
+.funil .fn{font-weight:700;font-size:16px}
+.funil .fv{font-size:22px;font-weight:700;letter-spacing:-.01em;margin:4px 0 2px}
+.funil .fl{display:grid;grid-template-columns:1fr auto;gap:2px 12px;font-size:13px;color:var(--ink-2);margin-top:8px}
+.funil .fl b{color:var(--ink);font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+.funil .share{height:6px;border-radius:0 3px 3px 0;background:var(--s1);margin-top:10px}
+.funil .sub{font-size:12px;color:var(--muted);margin-top:8px}
+.funil.off{opacity:.45}
 .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px}
 @media (max-width:820px){.tiles{grid-template-columns:repeat(2,1fr)}}
 .tile .val{font-size:24px;font-weight:700;margin-top:2px;letter-spacing:-.01em}
@@ -162,6 +177,7 @@ footer li{margin:4px 0}
     <div class="frow">
       <div class="fgroup" id="f-periodo"><span class="flabel">Período</span></div>
       <div class="fgroup" id="f-conta"><span class="flabel">Conta</span></div>
+      <select class="sel" id="f-funil" aria-label="Funil"></select>
       <select class="sel" id="f-projeto" aria-label="Produto"></select>
       <select class="sel" id="f-campanha" aria-label="Campanha"></select>
       <input class="sel" id="f-busca" type="search" placeholder="Buscar anúncio (ex.: V54)" aria-label="Buscar anúncio" style="width:190px">
@@ -194,6 +210,9 @@ footer li{margin:4px 0}
       <p class="note" style="margin:12px 0 0">Como o imposto incide sobre o total (anúncio + imposto), cada R$ 100 de anúncio vira R$ 113,83 no cartão. Exemplo real: recibo de 29/10 da conta DM, com R$ 3.579,82 de anúncios e R$ 4.076,50 cobrados.</p>
     </div>
   </div>
+
+  <div class="card-head" style="margin:24px 0 10px"><div><h2>Por funil</h2><div class="note">Valores com impostos. Compras e leads atribuídos pela Meta; o custo por compra/lead já inclui o imposto. Clique num funil para ver só ele na página inteira.</div></div></div>
+  <div class="funis" id="funis"></div>
 
   <div class="tiles" id="tiles"></div>
 
@@ -271,10 +290,19 @@ const dash=v=>v==null?'–':v;
 // índices
 const A=D.anuncios, C=D.conjuntos, K=D.campanhas;
 // linha: [dia, ad, spend, impr, cliques, lpv, ic, compras, valor, leads]
+// funis: agrupam produtos
+const FUNIS=[
+  {nome:'Manipulação Silenciosa',curto:'MS',test:p=>/^(Manipulação|MS R\$)/.test(p)},
+  {nome:'MS em espanhol',curto:'ES',test:p=>p.startsWith('MS em espanhol')},
+  {nome:'Black Friday 2026',curto:'BF',test:p=>p.startsWith('Black')},
+  {nome:'Prazer Proibido',curto:'PP',test:p=>p.startsWith('Prazer')},
+  {nome:'Workshop Carta Dourada',curto:'WK',test:p=>p.startsWith('Workshop')},
+];
+const PROJ_FUNIL=D.projetos.map(p=>{const i=FUNIS.findIndex(f=>f.test(p));return i<0?0:i;});
 const rows=D.linhas.map(l=>{const ad=A[l[1]], cj=ad[1], cp=C[cj][1], camp=K[cp];
-  return {dia:l[0],ad:l[1],cj,cp,conta:camp[1],proj:camp[2],spend:l[2],impr:l[3],clk:l[4],lpv:l[5],ic:l[6],buy:l[7],val:l[8],lead:l[9]}});
+  return {dia:l[0],ad:l[1],cj,cp,conta:camp[1],proj:camp[2],funil:PROJ_FUNIL[camp[2]],spend:l[2],impr:l[3],clk:l[4],lpv:l[5],ic:l[6],buy:l[7],val:l[8],lead:l[9]}});
 
-const st={d0:1,d1:31,contas:new Set(),proj:null,camp:null,cj:null,ad:null,q:'',tab:'camp',sort:'spend',dir:-1,limit:25};
+const st={d0:1,d1:31,contas:new Set(),funil:null,proj:null,camp:null,cj:null,ad:null,q:'',tab:'camp',sort:'spend',dir:-1,limit:25};
 function load(){try{const s=JSON.parse(localStorage.getItem('bruna-out26')||'{}');if(s.tab)st.tab=s.tab;}catch(e){}}
 function save(){try{localStorage.setItem('bruna-out26',JSON.stringify({tab:st.tab}))}catch(e){}}
 load();
@@ -291,6 +319,7 @@ function filtered(opts={}){
   const q=st.q.trim().toLowerCase();
   return rows.filter(r=>(opts.ignoreDay||(r.dia>=st.d0&&r.dia<=st.d1))
     &&(opts.ignoreConta||!st.contas.size||st.contas.has(r.conta))
+    &&(opts.ignoreFunil||st.funil==null||r.funil===st.funil)
     &&(opts.ignoreProj||st.proj==null||r.proj===st.proj)
     &&(st.camp==null||r.cp===st.camp)&&(st.cj==null||r.cj===st.cj)&&(st.ad==null||r.ad===st.ad)
     &&(!q||A[r.ad][0].toLowerCase().includes(q)));
@@ -303,18 +332,25 @@ const fp=document.getElementById('f-periodo');
 presets.forEach(([lbl,a,b])=>fp.append(el('button',{class:'chip',type:'button','data-p':a+'-'+b,onclick:()=>{st.d0=a;st.d1=b;render();},text:lbl})));
 const fc=document.getElementById('f-conta');
 D.contas.forEach((c,i)=>fc.append(el('button',{class:'chip',type:'button','data-c':i,onclick:()=>{st.contas.has(i)?st.contas.delete(i):st.contas.add(i);st.camp=st.cj=st.ad=null;render();}},el('i',{class:'dot',style:'background:'+COLORS[i]}),c)));
+const selF=document.getElementById('f-funil');
+selF.addEventListener('change',()=>{st.funil=selF.value===''?null:+selF.value;st.proj=st.camp=st.cj=st.ad=null;render();});
+function pickFunil(i){st.funil=st.funil===i?null:i;st.proj=st.camp=st.cj=st.ad=null;render();}
 const selP=document.getElementById('f-projeto'), selC=document.getElementById('f-campanha'), busca=document.getElementById('f-busca');
 selP.addEventListener('change',()=>{st.proj=selP.value===''?null:+selP.value;st.camp=st.cj=st.ad=null;render();});
 selC.addEventListener('change',()=>{st.camp=selC.value===''?null:+selC.value;st.cj=st.ad=null;render();});
 let bt;busca.addEventListener('input',()=>{clearTimeout(bt);bt=setTimeout(()=>{st.q=busca.value;render();},150);});
-document.getElementById('f-limpar').onclick=()=>{Object.assign(st,{d0:1,d1:31,proj:null,camp:null,cj:null,ad:null,q:'',limit:25});st.contas.clear();busca.value='';render();};
+document.getElementById('f-limpar').onclick=()=>{Object.assign(st,{d0:1,d1:31,funil:null,proj:null,camp:null,cj:null,ad:null,q:'',limit:25});st.contas.clear();busca.value='';render();};
 
 function renderFilters(){
   fp.querySelectorAll('[data-p]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.p===st.d0+'-'+st.d1));
   fc.querySelectorAll('[data-c]').forEach(b=>b.setAttribute('aria-pressed',st.contas.has(+b.dataset.c)));
-  selP.replaceChildren(el('option',{value:'',text:'Todos os produtos'}),...D.projetos.map((p,i)=>el('option',{value:i,text:p})));
+  selF.replaceChildren(el('option',{value:'',text:'Todos os funis'}),...FUNIS.map((f,i)=>el('option',{value:i,text:f.nome})));
+  selF.value=st.funil==null?'':st.funil;
+  const projs=D.projetos.map((p,i)=>i).filter(i=>st.funil==null||PROJ_FUNIL[i]===st.funil);
+  selP.replaceChildren(el('option',{value:'',text:'Todos os produtos'}),...projs.map(i=>el('option',{value:i,text:D.projetos[i]})));
   selP.value=st.proj==null?'':st.proj;
-  const base=rows.filter(r=>(!st.contas.size||st.contas.has(r.conta))&&(st.proj==null||r.proj===st.proj)&&r.dia>=st.d0&&r.dia<=st.d1);
+  selP.hidden=projs.length<2;
+  const base=rows.filter(r=>(!st.contas.size||st.contas.has(r.conta))&&(st.funil==null||r.funil===st.funil)&&(st.proj==null||r.proj===st.proj)&&r.dia>=st.d0&&r.dia<=st.d1);
   const sp={};for(const r of base)sp[r.cp]=(sp[r.cp]||0)+r.spend;
   const ids=Object.keys(sp).map(Number).sort((a,b)=>sp[b]-sp[a]);
   if(st.camp!=null&&!ids.includes(st.camp))ids.unshift(st.camp);
@@ -324,6 +360,7 @@ function renderFilters(){
   const add=(lbl,fn)=>at.append(el('span',{class:'tag'},el('span',{text:lbl,title:lbl}),el('button',{type:'button','aria-label':'Remover filtro '+lbl,onclick:()=>{fn();render();},text:'×'})));
   if(st.d0!==1||st.d1!==31)add(st.d0===st.d1?`Dia ${st.d0}/10`:`${st.d0}/10 a ${st.d1}/10`,()=>{st.d0=1;st.d1=31;});
   st.contas.forEach(i=>add('Conta '+D.contas[i],()=>st.contas.delete(i)));
+  if(st.funil!=null)add('Funil: '+FUNIS[st.funil].nome,()=>{st.funil=st.proj=null;});
   if(st.proj!=null)add(D.projetos[st.proj],()=>st.proj=null);
   if(st.camp!=null)add('Campanha: '+K[st.camp][0],()=>{st.camp=st.cj=st.ad=null;});
   if(st.cj!=null)add('Conjunto: '+C[st.cj][0],()=>{st.cj=st.ad=null;});
@@ -338,7 +375,7 @@ function renderKpis(t){
   document.getElementById('k-total2').textContent=R(tot);
   document.getElementById('k-invest').textContent=R(t.spend);
   document.getElementById('k-imp').textContent=R(imp);
-  document.getElementById('k-periodo').textContent=(st.d0===1&&st.d1===31?'1 a 31 de outubro de 2026':st.d0===st.d1?`${st.d0} de outubro de 2026`:`${st.d0} a ${st.d1} de outubro de 2026`)+(st.contas.size||st.proj!=null||st.camp!=null||st.q?' · com filtros':' · 4 contas');
+  document.getElementById('k-periodo').textContent=(st.d0===1&&st.d1===31?'1 a 31 de outubro de 2026':st.d0===st.d1?`${st.d0} de outubro de 2026`:`${st.d0} a ${st.d1} de outubro de 2026`)+(st.contas.size||st.funil!=null||st.proj!=null||st.camp!=null||st.q?' · com filtros':' · 4 contas');
   document.getElementById('bar-inv').style.flex=t.spend||1;document.getElementById('bar-imp').style.flex=imp||0;
   const tiles=[
     ['Impressões',N(t.impr),null],
@@ -351,6 +388,27 @@ function renderKpis(t){
     ['Custo por compra com imposto',t.buy?R(t.spend*GROSS/t.buy):'–','Inclui os 12,15%'],
   ];
   document.getElementById('tiles').replaceChildren(...tiles.map(([l,v,h])=>el('div',{class:'card tile'},el('div',{class:'k-label',text:l}),el('div',{class:'val',text:v}),h?el('div',{class:'hint',text:h}):null)));
+}
+
+// ---------- funis ----------
+function renderFunis(){
+  const list=filtered({ignoreFunil:true,ignoreProj:true});
+  const g=FUNIS.map(()=>({spend:0,buy:0,lead:0,ic:0,val:0,camps:new Set(),proj:{}}));
+  for(const r of list){const o=g[r.funil];o.spend+=r.spend;o.buy+=r.buy;o.lead+=r.lead;o.ic+=r.ic;o.val+=r.val;o.camps.add(r.cp);o.proj[r.proj]=(o.proj[r.proj]||0)+r.spend;}
+  const tot=g.reduce((a,o)=>a+o.spend,0)||1;
+  document.getElementById('funis').replaceChildren(...FUNIS.map((f,i)=>{const o=g[i];const lead=o.lead>o.buy;
+    const subs=Object.keys(o.proj).length>1?Object.entries(o.proj).sort((a,b)=>b[1]-a[1]).map(([p,v])=>D.projetos[p].replace(/^Manipulação Silenciosa /,'MS ')+': '+R(v*GROSS)).join(' · '):null;
+    return el('button',{class:'card funil'+(st.funil!=null&&st.funil!==i?' off':''),type:'button','aria-pressed':st.funil===i,onclick:()=>pickFunil(i)},
+      el('span',{class:'fn',text:f.nome}),
+      el('span',{class:'fv',text:R(o.spend*GROSS)}),
+      el('span',{class:'note',text:pct(o.spend/tot)+' do total · '+o.camps.size+(o.camps.size===1?' campanha':' campanhas')}),
+      el('div',{class:'share',style:`width:${Math.max(1,o.spend/tot*100)}%`}),
+      el('span',{class:'fl'},
+        el('span',{text:'Anúncios'}),el('b',{text:R(o.spend)}),
+        el('span',{text:'Impostos'}),el('b',{text:R(o.spend*GROSS-o.spend)}),
+        el('span',{text:lead?'Leads':'Compras'}),el('b',{text:N(lead?o.lead:o.buy)}),
+        el('span',{text:lead?'Por lead':'Por compra'}),el('b',{text:(lead?o.lead:o.buy)?R(o.spend*GROSS/(lead?o.lead:o.buy)):'–'})),
+      subs?el('span',{class:'sub',text:subs}):null);}));
 }
 
 // ---------- tooltip ----------
@@ -499,7 +557,7 @@ function renderCobrancas(){
     ...Object.entries(D.pastas).filter(([n])=>n.startsWith('Recibos')).map(([n,u])=>el('a',{class:'file',href:u,target:'_blank',rel:'noopener'},el('span',{class:'ic',text:'📁'}),el('span',null,n,el('small',{text:'Pasta com os recibos de cada cobrança'})))));
 }
 
-function render(){renderFilters();renderKpis(agg(filtered()));renderDia();renderBars();renderTable();renderCobrancas();}
+function render(){renderFilters();renderFunis();renderKpis(agg(filtered()));renderDia();renderBars();renderTable();renderCobrancas();}
 document.getElementById('lnk-pasta').href=D.pasta_raiz;
 document.getElementById('gerado').textContent=D.gerado.split('-').reverse().join('/');
 document.getElementById('theme').onclick=()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';try{localStorage.setItem('bruna-theme',r.dataset.theme)}catch(e){}};
